@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+
+VERSION="tg-send v2
+by PhateValleyman
+Jonas.Ned@outlook.co"
+
+CONFIG="$HOME/.config/tg-send.conf"
+
+GREEN="\e[32m"
+RED="\e[31m"
+YELLOW="\e[33m"
+CYAN="\e[36m"
+RESET="\e[0m"
+
+load_config() {
+    [[ -f "$CONFIG" ]] || { echo -e "${RED}Missing config: $CONFIG${RESET}"; exit 1; }
+    source "$CONFIG"
+
+    [[ -z "$TELEGRAM_TOKEN" ]] && { echo -e "${RED}Missing TELEGRAM_TOKEN${RESET}"; exit 1; }
+    [[ -z "$CHAT_ID" ]] && { echo -e "${RED}Missing CHAT_ID${RESET}"; exit 1; }
+
+    API="https://api.telegram.org/bot${TELEGRAM_TOKEN}"
+}
+
+check_deps() {
+    command -v curl >/dev/null || { echo -e "${RED}curl missing${RESET}"; exit 1; }
+    command -v jq >/dev/null || { echo -e "${RED}jq missing${RESET}"; exit 1; }
+}
+
+sender_prefix() {
+    if [[ -n "$SENDER_NAME" ]]; then
+        echo "[$SENDER_NAME]"
+    else
+        echo "[$USER@$(hostname)]"
+    fi
+}
+
+send_message() {
+    local text="$(sender_prefix) $1"
+
+    RESPONSE=$(curl -# -s -X POST "$API/sendMessage" \
+        -d chat_id="$CHAT_ID" \
+        -d text="$text")
+
+    [[ "$(echo "$RESPONSE" | jq -r '.ok')" == "true" ]] \
+        && echo -e "${GREEN}Message sent${RESET}" \
+        || echo -e "${RED}Message failed${RESET}"
+}
+
+send_file() {
+    local file="$1"
+
+    [[ -f "$file" ]] || { echo -e "${RED}File not found${RESET}"; exit 1; }
+
+    RESPONSE=$(curl -# -s -X POST \
+        -F chat_id="$CHAT_ID" \
+        -F document=@"$file" \
+        "$API/sendDocument")
+
+    [[ "$(echo "$RESPONSE" | jq -r '.ok')" == "true" ]] \
+        && echo -e "${GREEN}File sent${RESET}" \
+        || echo -e "${RED}File failed${RESET}"
+}
+
+send_photo() {
+    local file="$1"
+
+    RESPONSE=$(curl -# -s -X POST \
+        -F chat_id="$CHAT_ID" \
+        -F photo=@"$file" \
+        "$API/sendPhoto")
+
+    [[ "$(echo "$RESPONSE" | jq -r '.ok')" == "true" ]] \
+        && echo -e "${GREEN}Photo sent${RESET}" \
+        || echo -e "${RED}Photo failed${RESET}"
+}
+
+is_image() {
+    case "${1,,}" in
+        *.jpg|*.jpeg|*.png|*.gif|*.webp|*.bmp) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+usage() {
+echo -e "${CYAN}
+tg-send — Telegram CLI tool
+${RESET}
+
+${YELLOW}Usage:${RESET}
+  tg-send [options] <text|file>
+
+${YELLOW}Options:${RESET}
+  -m --message TEXT     send message
+  -f --file FILE        send file
+  -p --photo FILE       send photo
+  -h --help             show help
+  -v --version          version info
+
+${YELLOW}Auto detect:${RESET}
+  file exists + image ext → photo
+  file exists → file
+  otherwise → message
+
+${YELLOW}Examples:${RESET}
+  tg-send hello
+  tg-send notes.txt
+  tg-send image.png
+  tg-send -m \"Hello\"
+  tg-send -f backup.tar
+  tg-send -p pic.jpg
+"
+}
+
+main() {
+    load_config
+    check_deps
+
+    [[ $# -eq 0 ]] && { usage; exit 0; }
+
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        -v|--version) echo -e "$VERSION"; exit 0 ;;
+        -m|--message) shift; send_message "$*"; exit 0 ;;
+        -f|--file) shift; send_file "$1"; exit 0 ;;
+        -p|--photo) shift; send_photo "$1"; exit 0 ;;
+    esac
+
+    if [[ -f "$1" ]]; then
+        if is_image "$1"; then
+            send_photo "$1"
+        else
+            send_file "$1"
+        fi
+    else
+        send_message "$*"
+    fi
+}
+
+main "$@"
